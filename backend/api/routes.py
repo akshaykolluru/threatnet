@@ -29,7 +29,15 @@ from .database import (
     json_metadata,
 )
 from .extraction import ExtractionSourceType, persist_extraction
-from .frame_search import frame_index, get_frame_search_embedder, index_frames, search_frames
+from .frame_search import (
+    detector_verified_results,
+    frame_index,
+    get_frame_search_embedder,
+    index_frames,
+    is_person_carried_item_query,
+    person_context_search_results,
+    search_frames,
+)
 from .ingestion import get_face_extractor, inspect_video, public_ingestion_metadata
 from .screening import screen_workbook
 from .services import build_graph_payload, demo_state
@@ -724,6 +732,7 @@ async def search_cctv_frames(
     if not query.strip() and not reference_content:
         raise HTTPException(status_code=422, detail="Enter a search prompt or upload a reference image")
     selected_evidence: Evidence | None = None
+    selected_frames: list[dict[str, Any]] = []
     with SessionLocal() as session:
         _case_or_404(session, case_id)
         if evidence_id:
@@ -731,17 +740,17 @@ async def search_cctv_frames(
             if not evidence or evidence.case_id != case_id or evidence.type != "cctv":
                 raise HTTPException(status_code=422, detail="Select a CCTV clip belonging to this case")
             selected_evidence = evidence
+            stored_frames = json_metadata(evidence.metadata_json).get("frames", [])
+            selected_frames = _restore_frame_storage_paths(stored_frames if isinstance(stored_frames, list) else [])
     search_index = _frame_search_index()
     # Clips uploaded before semantic search was installed have stored frames but
     # no frame vectors. Build their cache on first search instead of returning a
     # false "not found" result.
     if selected_evidence and not search_index.count_by_metadata(evidence_id=evidence_id):
-        stored_frames = json_metadata(selected_evidence.metadata_json).get("frames", [])
-        frames = _restore_frame_storage_paths(stored_frames if isinstance(stored_frames, list) else [])
-        if not frames:
+        if not selected_frames:
             raise HTTPException(status_code=422, detail="This CCTV record has no readable sampled frames. Re-upload the clip to create a searchable frame index.")
         try:
-            index_frames(search_index, frames, case_id, evidence_id)
+            index_frames(search_index, selected_frames, case_id, evidence_id)
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     try:
@@ -755,6 +764,17 @@ async def search_cctv_frames(
         # Do not turn a model/runtime integration issue into a misleading empty
         # search result or an opaque server error for the investigator.
         raise HTTPException(status_code=503, detail=f"Frame search could not run: {exc}") from exc
+    detector_results = detector_verified_results(selected_frames, query) if selected_frames and query.strip() else None
+    # Detector-supported targets are only returned when actually detected. This
+    # prevents a semantically nearest but unrelated frame from being called a
+    # match for requests such as person, car, backpack, or phone.
+    if detector_results is not None:
+        results = detector_results
+        # A shopping bag can be too small for the lightweight object detector.
+        # In that narrow case, compare person-and-hand crops so unrelated people
+        # do not win merely because they share the same street scene.
+        if not results and is_person_carried_item_query(query):
+            results = person_context_search_results(selected_frames, query)
     face_results = _reference_face_candidates(case_id, reference_content, evidence_id)
     return {
         "case_id": case_id,

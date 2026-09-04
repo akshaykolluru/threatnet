@@ -96,7 +96,16 @@ def demo_state():
 
 def _expand_demo_state(state):
     existing = {item["id"] for item in state["cases"]}
-    additions = [("CASE-202", "Warehouse access review", "Medium", "Access-card events, staff statements, and delivery records for a second demo investigation."), ("CASE-303", "Night vehicle pattern", "High", "Vehicle sightings and call-log signals across a late-night route.")]
+    additions = [
+        ("CASE-202", "Warehouse access review", "Medium", "Access-card events, staff statements, and delivery records for a second demo investigation."),
+        ("CASE-303", "Night vehicle pattern", "High", "Vehicle sightings and call-log signals across a late-night route."),
+        (
+            "CASE-RIYA-001",
+            "Riya Sharma Homicide Investigation — Fictional Demo",
+            "High",
+            "Fictional presentation case. Source-linked records support review of Rohan Mehta as a possible organizer and Vikram Sethi as a possible direct perpetrator; all findings require human verification.",
+        ),
+    ]
     for case_id, title, priority, summary in additions:
         if case_id in existing:
             continue

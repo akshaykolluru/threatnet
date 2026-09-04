@@ -12,3 +12,4 @@ backend/storage/*
 !backend/storage/.gitkeep
 .env
 .DS_Store
+/yolo11n.pt

@@ -44,6 +44,36 @@ Human-in-the-loop investigation workspace and intelligence-discovery demo built 
 ThreatNet uses InsightFace embeddings and FAISS automatically. The local demo stays
 runnable without them and labels its OpenCV fallback output accordingly.
 
+### Windows presentation setup
+
+Use PowerShell in the project folder. The command below creates a usable virtual
+environment, seeds the fictional **CASE-RIYA-001** presentation case, and opens
+separate API and web-server terminals:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\start-demo.ps1
+```
+
+If a prior `.venv` references a removed Python installation, recreate it once:
+
+```powershell
+.\start-demo.ps1 -ResetEnvironment
+```
+
+If Python is missing, install Python 3.12, close and reopen PowerShell, then run
+the command again:
+
+```powershell
+winget install Python.Python.3.12
+```
+
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000) after both terminals are ready.
+The fictional Riya case includes a local workbook at
+`backend/storage/demo-assets/case-riya-suspect-screening.xlsx` for the **Suspect
+screening** view, plus generated synthetic Riverside CAM-07 frames for **CCTV
+intake**. All records are labeled as fictional leads requiring human verification.
+
 ## Tests
 
 - `python -m pytest`

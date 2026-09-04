@@ -20,6 +20,13 @@
       "status": "Open",
       "priority": "High",
       "summary": "Vehicle sightings and call-log signals across a late-night route."
+    },
+    {
+      "id": "CASE-RIYA-001",
+      "title": "Riya Sharma Homicide Investigation \u2014 Fictional Demo",
+      "status": "Open",
+      "priority": "High",
+      "summary": "Fictional presentation case. Source-linked records support review of Rohan Mehta as a possible organizer and Vikram Sethi as a possible direct perpetrator; all findings require human verification."
     }
   ],
   "evidence": [
@@ -76,6 +83,24 @@
       "notes": "Synthetic location signal requiring corroboration.",
       "confidence": 0.58,
       "source": "location/CASE-303-L1"
+    },
+    {
+      "id": "CASE-RIYA-001-EV1",
+      "case_id": "CASE-RIYA-001",
+      "title": "Reference statement",
+      "type": "statement",
+      "notes": "Synthetic statement record for demo review.",
+      "confidence": 0.64,
+      "source": "statement/CASE-RIYA-001-W1"
+    },
+    {
+      "id": "CASE-RIYA-001-EV2",
+      "case_id": "CASE-RIYA-001",
+      "title": "Location signal",
+      "type": "location",
+      "notes": "Synthetic location signal requiring corroboration.",
+      "confidence": 0.58,
+      "source": "location/CASE-RIYA-001-L1"
     }
   ],
   "events": [
@@ -127,6 +152,20 @@
       "time": "2026-09-05T20:28:00",
       "label": "Signal cross-check queued",
       "location": "Review queue"
+    },
+    {
+      "id": "CASE-RIYA-001-EVT1",
+      "case_id": "CASE-RIYA-001",
+      "time": "2026-09-05T20:10:00",
+      "label": "Source record added",
+      "location": "Case desk"
+    },
+    {
+      "id": "CASE-RIYA-001-EVT2",
+      "case_id": "CASE-RIYA-001",
+      "time": "2026-09-05T20:28:00",
+      "label": "Signal cross-check queued",
+      "location": "Review queue"
     }
   ],
   "relations": [
@@ -158,6 +197,16 @@
     {
       "source": "CASE-303-EV2",
       "target": "CASE-303-EVT2",
+      "label": "correlates"
+    },
+    {
+      "source": "CASE-RIYA-001-EV1",
+      "target": "CASE-RIYA-001-EVT1",
+      "label": "supports"
+    },
+    {
+      "source": "CASE-RIYA-001-EV2",
+      "target": "CASE-RIYA-001-EVT2",
       "label": "correlates"
     }
   ],
@@ -196,6 +245,12 @@
       "actor": "demo-investigator",
       "action": "opened_case",
       "target": "CASE-303"
+    },
+    {
+      "at": "2026-09-05T20:02:00",
+      "actor": "demo-investigator",
+      "action": "opened_case",
+      "target": "CASE-RIYA-001"
     }
   ],
   "ranking": [
@@ -222,6 +277,12 @@
       "label": "Reference statement",
       "score": 0.64,
       "reason": "Source record needs corroboration"
+    },
+    {
+      "id": "CASE-RIYA-001-PR1",
+      "label": "Reference statement",
+      "score": 0.64,
+      "reason": "Source record needs corroboration"
     }
   ],
   "contradictions": [
@@ -237,6 +298,11 @@
     },
     {
       "id": "CASE-303-CX1",
+      "severity": "low",
+      "summary": "Synthetic source records need cross-checking."
+    },
+    {
+      "id": "CASE-RIYA-001-CX1",
       "severity": "low",
       "summary": "Synthetic source records need cross-checking."
     }
