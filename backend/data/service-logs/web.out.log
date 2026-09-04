@@ -1,0 +1,14 @@
+
+> crime-investigation-web@0.1.0 dev
+> next dev -p 3000
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+
+ ✓ Starting...
+ ✓ Ready in 2.1s
+ ○ Compiling / ...
+ ✓ Compiled / in 2.3s (463 modules)
+ GET / 200 in 2436ms
+ ✓ Compiled in 419ms (226 modules)
+[?25h

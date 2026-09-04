@@ -221,7 +221,8 @@ def inspect_video(
                     "path": str(frame_path),
                     "frame_index": index,
                     "timestamp_seconds": timestamp_seconds,
-                    "face_candidates": len(descriptors),
+                    "face_candidates": len([item for item in descriptors if item.face_detected]),
+                    "face_detected": any(item.face_detected for item in descriptors),
                 }
                 frames.append(frame_metadata)
                 for descriptor in descriptors:

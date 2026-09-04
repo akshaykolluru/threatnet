@@ -1,19 +1,28 @@
 "use client";
 
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, RefObject, useEffect, useRef, useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 type View = "overview" | "timeline" | "mindmap" | "cctv" | "screening";
 type CaseItem = { id: string; title: string; status: string; priority: string; summary: string };
-type Evidence = { id: string; title: string; type: string; notes: string; confidence?: number; source: string };
+type CctvFrame = { path: string; frame_index: number; timestamp_seconds: number; face_candidates?: number; face_detected?: boolean };
+type Evidence = { id: string; title: string; type: string; notes: string; confidence?: number; source: string; metadata?: { frames?: CctvFrame[]; duration_seconds?: number; fps?: number } };
 type GraphNode = { id: string; label: string; group: string };
 type GraphEdge = { source: string; target: string; label: string };
 type TimelineEvent = { id: string; time: string; label: string; location: string; entity_id?: string | null; kind?: string };
 type IntelligenceAlert = { id: string; type: string; severity: string; title: string; summary: string; reasoning_trace?: string; created_at?: string | null };
 type Detail = CaseItem & { evidence: Evidence[]; events: TimelineEvent[]; ranking: any[]; contradictions: any[]; audit: any[]; alerts?: IntelligenceAlert[]; face_matches?: any[]; graph?: { nodes: GraphNode[]; edges: GraphEdge[] } };
 
+function storageUrl(path?: string): string {
+  if (!path) return "";
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith("storage/")) return `${API_BASE}/${normalized}`;
+  if (normalized.startsWith("/storage/")) return `${API_BASE}${normalized}`;
+  return "";
+}
+
 function evidenceImageUrl(item: Evidence): string {
-  return item.type === "image" && item.source.startsWith("storage/") ? `${API_BASE}/${item.source}` : "";
+  return item.type === "image" && item.source.startsWith("storage/") ? storageUrl(item.source) : "";
 }
 
 export default function Home() {
@@ -102,7 +111,15 @@ export default function Home() {
     if (!file || !active) return;
     setUploading(true); setUploadMessage("Analyzing video and sampling frames...");
     const form = new FormData(); form.append("file", file);
-    try { const response = await fetch(`${API_BASE}/api/case/${active}/cctv/inspect`, { method: "POST", body: form }); const data = await response.json(); if (!response.ok) throw Error(data.detail || "CCTV inspection failed"); setUploadMessage(`Indexed ${data.metadata.frames.length} frames and attached ${data.evidence_id}.`); await loadDetail(active); } catch (reason: any) { setUploadMessage(reason.message); } finally { setUploading(false); }
+    try {
+      const response = await fetch(`${API_BASE}/api/case/${active}/cctv/inspect`, { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.detail || "CCTV inspection failed");
+      setUploadMessage(`Indexed ${data.metadata.frames.length} frames and attached ${data.evidence_id}.`);
+      await loadDetail(active);
+    } catch (reason: any) {
+      setUploadMessage(reason?.message === "Failed to fetch" ? `Cannot reach the analysis API at ${API_BASE}. Start the API, then try Analyze video again.` : reason.message);
+    } finally { setUploading(false); }
   }
 
   async function uploadSheet(file?: File) {
@@ -119,7 +136,7 @@ export default function Home() {
     <header className="topbar"><div className="brand"><span className="brand-mark">SI</span><span>CASELINE <small>evidence workspace</small></span></div><span className="secure-label">LOCAL DEMO / HUMAN REVIEW</span></header>
     <section className="hero"><div><div className="kicker">Investigation desk</div><h1>Turn scattered signals into a reviewable case story.</h1><p className="muted">A structured workspace for evidence, timelines, relationships, and investigator judgment.</p></div><div className="hero-status"><span className="pulse" />Demo mode active<br /><small>AI outputs are indicators, never proof.</small></div></section>
     <section className="workspace-grid"><aside className="case-rail panel"><div className="rail-heading"><div><span className="eyebrow">Workspace</span><h2>Cases</h2></div><button className="count" onClick={() => setShowAddCase((value) => !value)}>+ Add case</button></div>{showAddCase && <div className="add-case"><input autoFocus placeholder="Case title" value={newCaseTitle} onChange={(event) => setNewCaseTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCase()} /><button onClick={addCase}>Create</button></div>}<div className="case-list">{cases.map((item) => <button className={`case-card ${active === item.id ? "active" : ""}`} key={item.id} onClick={() => { setActive(item.id); setHovered(null); }}><span className={`priority ${item.priority.toLowerCase()}`} /><span><strong>{item.id}</strong><b>{item.title}</b><small>{item.status} · {item.priority} priority</small></span></button>)}{!cases.length && !error && <div className="empty-state">Loading cases...</div>}{error && <div className="error-state">{error}<button onClick={() => loadCases()}>Retry</button></div>}</div></aside>
-      <div className="content-column">{detail && <><div className="case-heading"><div><span className="eyebrow">Active investigation / {detail.id}</span><h2>{detail.title}</h2><p className="muted">{detail.summary}</p></div><div className="case-actions"><span className="status-chip">● {detail.status}</span><button className="status-action" onClick={toggleCaseStatus}>{detail.status === "Closed" ? "Reopen case" : "Close case"}</button><button className="delete-case" onClick={deleteCase}>Delete case</button>{caseMessage && <small className="case-message">{caseMessage}</small>}</div></div><nav className="view-nav" aria-label="Case views">{([['overview', 'Command view'], ['timeline', 'Timeline'], ['mindmap', 'Mind map'], ['cctv', 'CCTV intake'], ['screening', 'Suspect screening']] as [View, string][]).map(([key, label]) => <button key={key} className={view === key ? "selected" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>{loading ? <div className="panel empty-state">Loading case intelligence...</div> : view === "overview" ? <Overview detail={detail} setView={setView} /> : view === "timeline" ? <Timeline detail={detail} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "mindmap" ? <MindMap detail={detail} hovered={hovered} setHovered={setHovered} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "cctv" ? <Cctv file={pendingKind === "video" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "video")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "video")} onAnalyze={() => uploadVideo(pendingFile ?? undefined)} onBrowse={() => fileRef.current?.click()} inputRef={fileRef} uploading={uploading} message={uploadMessage} /> : <Screening result={screening} file={pendingKind === "sheet" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "sheet")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "sheet")} onAnalyze={() => uploadSheet(pendingFile ?? undefined)} onBrowse={() => sheetRef.current?.click()} inputRef={sheetRef} uploading={uploading} message={uploadMessage} />}</>}</div>
+      <div className="content-column">{detail && <><div className="case-heading"><div><span className="eyebrow">Active investigation / {detail.id}</span><h2>{detail.title}</h2><p className="muted">{detail.summary}</p></div><div className="case-actions"><span className="status-chip">● {detail.status}</span><button className="status-action" onClick={toggleCaseStatus}>{detail.status === "Closed" ? "Reopen case" : "Close case"}</button><button className="delete-case" onClick={deleteCase}>Delete case</button>{caseMessage && <small className="case-message">{caseMessage}</small>}</div></div><nav className="view-nav" aria-label="Case views">{([['overview', 'Command view'], ['timeline', 'Timeline'], ['mindmap', 'Mind map'], ['cctv', 'CCTV intake'], ['screening', 'Suspect screening']] as [View, string][]).map(([key, label]) => <button key={key} className={view === key ? "selected" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>{loading ? <div className="panel empty-state">Loading case intelligence...</div> : view === "overview" ? <Overview detail={detail} setView={setView} /> : view === "timeline" ? <Timeline detail={detail} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "mindmap" ? <MindMap detail={detail} hovered={hovered} setHovered={setHovered} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "cctv" ? <Cctv evidence={detail.evidence} file={pendingKind === "video" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "video")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "video")} onAnalyze={() => uploadVideo(pendingFile ?? undefined)} onBrowse={() => fileRef.current?.click()} inputRef={fileRef} uploading={uploading} message={uploadMessage} /> : <Screening result={screening} file={pendingKind === "sheet" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "sheet")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "sheet")} onAnalyze={() => uploadSheet(pendingFile ?? undefined)} onBrowse={() => sheetRef.current?.click()} inputRef={sheetRef} uploading={uploading} message={uploadMessage} />}</>}</div>
     </section>
   </div></main>;
 }
@@ -172,7 +189,96 @@ function EvidenceRecords({ items, onDelete }: { items: Evidence[]; onDelete: (ki
   async function remove(id: string) { setRemoving(id); setMessage(""); try { if (await onDelete("evidence", id)) setMessage("Evidence record deleted and the case map updated."); } catch (reason: any) { setMessage(reason.message); } finally { setRemoving(""); } }
   return <div className="map-record-list"><div className="record-list-heading"><span>Evidence records</span><small>{items.length} linked to this case</small></div>{items.map((item) => { const imageUrl = evidenceImageUrl(item); return <div className="map-record" key={item.id}>{imageUrl ? <img className="record-thumb" src={imageUrl} alt="" /> : <span className="record-thumb record-thumb-fallback">{item.type.slice(0, 2).toUpperCase()}</span>}<div><strong>{item.title}</strong><small>{item.type} · {item.source}</small></div><button className="delete-record" disabled={removing === item.id} aria-label={`Delete ${item.title}`} onClick={() => remove(item.id)}>{removing === item.id ? "Deleting..." : "Delete"}</button></div>; })}{!items.length && <div className="empty-records">No evidence records yet.</div>}{message && <div className="record-status">{message}</div>}</div>;
 }
-function Cctv({ onDrop, onFile, onAnalyze, onBrowse, inputRef, uploading, message, file }: any) { return <section className="panel intake-panel"><div className="panel-title"><div><span className="eyebrow">Evidence intake</span><h3>Inspect a CCTV clip</h3><p className="muted">Choose a clip, then analyze it for sampled frames and metadata.</p></div><span className="outline-chip">OpenCV workflow</span></div><div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><div className="upload-icon">^</div><h3>{file ? file.name : "Drop CCTV video here"}</h3><p>MP4, MOV, AVI - maximum 100 MB</p><button onClick={onBrowse} disabled={uploading}>{file ? "Change video" : "Choose video"}</button><input ref={inputRef} type="file" accept="video/*" onChange={onFile} hidden />{file && <button onClick={onAnalyze} disabled={uploading}>{uploading ? "Analyzing..." : "Analyze video"}</button>}</div>{message && <div className="upload-message">{message}</div>}<div className="guardrail"><strong>Human review boundary</strong><span>The original video stays as a file reference. Sampled frames and metadata are reviewable evidence, not an automated conclusion.</span></div></section>; }
+function Cctv({ evidence, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploading, message, file }: {
+  evidence: Evidence[];
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
+  onFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  onAnalyze: () => void;
+  onBrowse: () => void;
+  inputRef: RefObject<HTMLInputElement>;
+  uploading: boolean;
+  message: string;
+  file: File | null;
+}) {
+  const clips = evidence.filter((item) => item.type === "cctv" && (item.metadata?.frames?.length ?? 0) > 0);
+  const latest = clips[clips.length - 1];
+  const [activeId, setActiveId] = useState(latest?.id ?? "");
+  const selected = clips.find((item) => item.id === activeId) ?? latest;
+  const frames = selected?.metadata?.frames ?? [];
+  const [preview, setPreview] = useState<CctvFrame | null>(null);
+  const previewFrame = preview && frames.some((frame) => frame.path === preview.path) ? preview : frames[0] ?? null;
+
+  useEffect(() => {
+    if (latest?.id) {
+      setActiveId(latest.id);
+      setPreview(null);
+    }
+  }, [latest?.id]);
+
+  return (
+    <section className="panel intake-panel">
+      <div className="panel-title">
+        <div>
+          <span className="eyebrow">Evidence intake</span>
+          <h3>Inspect a CCTV clip</h3>
+          <p className="muted">Choose a clip, then analyze it for sampled frames and metadata.</p>
+        </div>
+        <span className="outline-chip">OpenCV workflow</span>
+      </div>
+      <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
+        <div className="upload-icon">^</div>
+        <h3>{file ? file.name : "Drop CCTV video here"}</h3>
+        <p>MP4, MOV, AVI - maximum 100 MB</p>
+        <button onClick={onBrowse} disabled={uploading}>{file ? "Change video" : "Choose video"}</button>
+        <input ref={inputRef} type="file" accept="video/*" onChange={onFile} hidden />
+        {file && <button onClick={onAnalyze} disabled={uploading}>{uploading ? "Analyzing..." : "Analyze video"}</button>}
+      </div>
+      {message && <div className="upload-message">{message}</div>}
+      {clips.length > 1 && (
+        <div className="clip-switcher">
+          {clips.map((clip) => (
+            <button key={clip.id} className={clip.id === selected?.id ? "selected" : ""} onClick={() => { setActiveId(clip.id); setPreview(null); }}>
+              {clip.id} · {clip.metadata?.frames?.length ?? 0} frames
+            </button>
+          ))}
+        </div>
+      )}
+      {selected && frames.length > 0 && (
+        <div className="frame-review">
+          <div className="record-list-heading">
+            <span>Sampled frames</span>
+            <small>{selected.id} · {frames.length} stills for human review</small>
+          </div>
+          {previewFrame && (
+            <figure className="frame-hero">
+              <img src={storageUrl(previewFrame.path)} alt={`Sampled frame at ${previewFrame.timestamp_seconds}s`} />
+              <figcaption>
+                {previewFrame.timestamp_seconds.toFixed(1)}s
+                {previewFrame.face_detected === true ? " · Face candidate" : previewFrame.face_detected === false ? " · No face detected" : ""}
+              </figcaption>
+            </figure>
+          )}
+          <div className="frame-grid">
+            {frames.map((frame) => {
+              const src = storageUrl(frame.path);
+              if (!src) return null;
+              return (
+                <button type="button" className={`frame-card ${previewFrame?.path === frame.path ? "selected" : ""}`} key={frame.path} onClick={() => setPreview(frame)}>
+                  <img src={src} alt={`Frame at ${frame.timestamp_seconds}s`} />
+                  <span>{frame.timestamp_seconds.toFixed(1)}s</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <div className="guardrail">
+        <strong>Human review boundary</strong>
+        <span>The original video stays as a file reference. Sampled frames and metadata are reviewable evidence, not an automated conclusion.</span>
+      </div>
+    </section>
+  );
+}
 function Screening({ result, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploading, message, file }: any) { return <section className="panel intake-panel"><div className="panel-title"><div><span className="eyebrow">Spreadsheet intake</span><h3>Narrow a suspect review queue</h3><p className="muted">Choose a workbook, then analyze the rows for this case.</p></div><span className="outline-chip">{result ? `${result.input_rows} -> ${result.shortlist_size}` : "Excel workflow"}</span></div><div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}><div className="upload-icon">[]</div><h3>{file ? file.name : "Drop suspect workbook here"}</h3><p>.xlsx or .xlsm - use the sample workbook structure</p><button onClick={onBrowse} disabled={uploading}>{file ? "Change workbook" : "Choose workbook"}</button><input ref={inputRef} type="file" accept=".xlsx,.xlsm" onChange={onFile} hidden />{file && <button onClick={onAnalyze} disabled={uploading}>{uploading ? "Analyzing..." : "Analyze workbook"}</button>}</div>{message && <div className="upload-message">{message}</div>}{result && <div className="screening-result"><div className="result-summary"><strong>{result.shortlist_size} candidates queued</strong><span>from {result.input_rows} input rows</span></div>{result.shortlist.slice(0, 8).map((item: any) => <div className="screen-row" key={item.suspect_id}><strong>{item.suspect_id}</strong><span>{item.name}</span><small>{item.area} · {item.route_match} route · {item.call_link_count} linked calls</small><b>{Math.round(item.score * 100)}%</b></div>)}</div>}<div className="guardrail"><strong>Human review boundary</strong><span>This is a ranked review queue based on declared spreadsheet signals. It does not identify a person or establish guilt.</span></div></section>; }
 function Panel({ title, action, children }: any) { return <section className="panel"><div className="panel-title"><h3>{title}</h3><span className="eyebrow">{action}</span></div>{children}</section>; }
 function Metric({ label, value }: { label: string; value: number }) { return <div className="metric panel"><span>{label}</span><strong>{value.toString().padStart(2, "0")}</strong></div>; }
