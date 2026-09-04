@@ -146,6 +146,15 @@ class FaceVectorIndex:
             return len(identifiers)
         return sum(metadata_by_id.get(item_id, {}).get("case_id") == case_id for item_id in identifiers)
 
+    def count_by_metadata(self, **criteria: Any) -> int:
+        """Count vectors with an exact metadata match without exposing index internals."""
+
+        _, identifiers, metadata_by_id = self._load()
+        return sum(
+            all(metadata_by_id.get(item_id, {}).get(key) == value for key, value in criteria.items())
+            for item_id in identifiers
+        )
+
     def _normalize(self, vector: Sequence[float]) -> np.ndarray:
         array = np.asarray(vector, dtype=np.float32).reshape(-1)
         if array.size != EMBEDDING_DIMENSION:

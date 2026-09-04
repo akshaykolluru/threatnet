@@ -496,7 +496,9 @@ async def inspect_cctv(
     file: UploadFile = File(...),
     recorded_at: str | None = Form(None),
     location: str = Form(""),
-    sample_every_seconds: float = Form(2.0),
+    # One-second sampling is a practical CCTV default: the previous two-second
+    # interval could miss a person or object that appears only briefly.
+    sample_every_seconds: float = Form(1.0),
     query: str = Form(""),
     reference_image: UploadFile | None = File(None),
 ) -> dict[str, Any]:
@@ -651,6 +653,21 @@ def _public_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]
     return public
 
 
+def _restore_frame_storage_paths(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert stored /storage references back to local paths for one-time reindexing."""
+
+    restored: list[dict[str, Any]] = []
+    for frame in frames:
+        source = Path(str(frame.get("path", "")).replace("\\", "/"))
+        if source.parts[:1] != ("storage",):
+            continue
+        local_path = _storage_root() / Path(*source.parts[1:])
+        if not local_path.is_file():
+            continue
+        restored.append({**frame, "path": str(local_path)})
+    return restored
+
+
 @router.post("/case/{case_id}/cctv/search")
 async def search_cctv_frames(
     case_id: str,
@@ -665,19 +682,38 @@ async def search_cctv_frames(
     reference_content = await _validated_reference_image(reference_image)
     if not query.strip() and not reference_content:
         raise HTTPException(status_code=422, detail="Enter a search prompt or upload a reference image")
+    selected_evidence: Evidence | None = None
     with SessionLocal() as session:
         _case_or_404(session, case_id)
         if evidence_id:
             evidence = session.get(Evidence, evidence_id)
             if not evidence or evidence.case_id != case_id or evidence.type != "cctv":
                 raise HTTPException(status_code=422, detail="Select a CCTV clip belonging to this case")
+            selected_evidence = evidence
+    search_index = _frame_search_index()
+    # Clips uploaded before semantic search was installed have stored frames but
+    # no frame vectors. Build their cache on first search instead of returning a
+    # false "not found" result.
+    if selected_evidence and not search_index.count_by_metadata(evidence_id=evidence_id):
+        stored_frames = json_metadata(selected_evidence.metadata_json).get("frames", [])
+        frames = _restore_frame_storage_paths(stored_frames if isinstance(stored_frames, list) else [])
+        if not frames:
+            raise HTTPException(status_code=422, detail="This CCTV record has no readable sampled frames. Re-upload the clip to create a searchable frame index.")
+        try:
+            index_frames(search_index, frames, case_id, evidence_id)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     try:
         results = search_frames(
-            _frame_search_index(), case_id, query=query, reference_image=reference_content,
+            search_index, case_id, prompt=query, reference_image=reference_content,
             evidence_id=evidence_id, limit=max(1, min(limit, 25)),
         )
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        # Do not turn a model/runtime integration issue into a misleading empty
+        # search result or an opaque server error for the investigator.
+        raise HTTPException(status_code=503, detail=f"Frame search could not run: {exc}") from exc
     return {
         "case_id": case_id,
         "evidence_id": evidence_id,
