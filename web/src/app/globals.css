@@ -88,3 +88,12 @@
 .frame-card img { width:100%; height:96px; object-fit:cover; }
 .frame-card span { padding:0 8px 7px; font:10px Arial,sans-serif; }
 .frame-card.selected,.frame-card:hover { border-color:rgba(105,197,255,.55); color:var(--accent); }
+.cctv-query { display:grid; gap:10px; margin-top:14px; padding:13px; border:1px solid rgba(105,197,255,.17); border-radius:11px; background:rgba(105,197,255,.035); }
+.cctv-query label { display:grid; gap:6px; color:var(--muted); font:11px Arial,sans-serif; text-transform:uppercase; letter-spacing:.06em; }
+.cctv-query textarea { width:100%; resize:vertical; border:1px solid rgba(105,197,255,.25); border-radius:8px; padding:10px; background:#071522; color:var(--text); font:13px Arial,sans-serif; text-transform:none; }
+.cctv-query small { font:10px Arial,sans-serif; line-height:1.45; }
+.search-clip { width:max-content; border:1px solid rgba(105,197,255,.38); border-radius:8px; padding:8px 11px; background:rgba(105,197,255,.1); color:var(--accent); font:11px Arial,sans-serif; }
+.search-clip:disabled { cursor:not-allowed; opacity:.5; }
+.search-result { margin:0; }
+.search-result figcaption { display:grid; gap:4px; padding:0 8px 8px; font:10px Arial,sans-serif; line-height:1.35; }
+.search-result figcaption b { color:var(--accent); font-weight:normal; }

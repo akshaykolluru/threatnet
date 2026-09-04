@@ -80,6 +80,16 @@ class FaceVectorIndex:
         kept_metadata = {item_id: metadata_by_id.get(item_id, {}) for item_id in kept_identifiers}
         self._persist(kept_vectors, kept_identifiers, kept_metadata)
 
+    def remove_by_metadata(self, **criteria: Any) -> None:
+        """Remove vectors belonging to a deleted evidence record or case."""
+
+        _, identifiers, metadata_by_id = self._load()
+        self.remove(
+            item_id
+            for item_id in identifiers
+            if all(metadata_by_id.get(item_id, {}).get(key) == value for key, value in criteria.items())
+        )
+
     def search(
         self,
         query: Sequence[float],

@@ -12,3 +12,6 @@ pytest>=8.0
 # installed and retains an explicit OpenCV + NumPy fallback for local demo mode.
 insightface>=0.7.3; python_version < "3.14"
 faiss-cpu>=1.8.0; python_version < "3.14"
+
+# Shared text/image embeddings for cached semantic video-frame retrieval.
+open_clip_torch>=2.26

@@ -29,6 +29,7 @@ from .database import (
     json_metadata,
 )
 from .extraction import ExtractionSourceType, persist_extraction
+from .frame_search import frame_index, get_frame_search_embedder, index_frames, search_frames
 from .ingestion import get_face_extractor, inspect_video, public_ingestion_metadata
 from .screening import screen_workbook
 from .services import build_graph_payload, demo_state
@@ -45,6 +46,10 @@ def _storage_root() -> Path:
 
 def _face_index() -> FaceVectorIndex:
     return FaceVectorIndex(_storage_root() / "face-index")
+
+
+def _frame_search_index() -> FaceVectorIndex:
+    return frame_index(_storage_root())
 
 
 def _storage_reference(path: Path) -> str:
@@ -225,6 +230,7 @@ def delete_case(case_id: str) -> dict[str, str]:
         session.delete(case)
         session.commit()
     _face_index().remove(embedding_ids)
+    _frame_search_index().remove_by_metadata(case_id=case_id)
     for source in evidence_sources:
         _remove_storage_file(source)
     return {"deleted": case_id}
@@ -370,6 +376,7 @@ def delete_evidence(case_id: str, evidence_id: str) -> dict[str, str]:
         session.add(AuditLog(actor="demo-investigator", action=f"deleted_evidence:{evidence_id}", target=case_id))
         session.commit()
     _face_index().remove(embedding_ids)
+    _frame_search_index().remove_by_metadata(evidence_id=evidence_id)
     _remove_storage_file(source)
     return {"deleted": evidence_id, "case_id": case_id}
 
@@ -490,6 +497,8 @@ async def inspect_cctv(
     recorded_at: str | None = Form(None),
     location: str = Form(""),
     sample_every_seconds: float = Form(2.0),
+    query: str = Form(""),
+    reference_image: UploadFile | None = File(None),
 ) -> dict[str, Any]:
     """Sample CCTV frames, create 512-d descriptors, and index them with provenance."""
 
@@ -504,6 +513,12 @@ async def inspect_cctv(
         raise HTTPException(status_code=422, detail="The uploaded video is empty")
     if len(content) > 100 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Demo uploads are limited to 100 MB")
+    reference_content = await _validated_reference_image(reference_image)
+    if (query.strip() or reference_content) and not get_frame_search_embedder().available:
+        raise HTTPException(
+            status_code=503,
+            detail="Semantic frame search is unavailable. Install the optional open_clip_torch dependency and ensure its pretrained model can be downloaded once.",
+        )
 
     job_dir = _storage_root() / "cctv" / uuid4().hex
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -520,6 +535,17 @@ async def inspect_cctv(
     except ValueError as exc:
         source.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Keep local paths only while the embedding worker reads the generated files.
+    # API/database output below is rewritten to the existing /storage public mount.
+    evidence_id = f"CCTV-{uuid4().hex[:8].upper()}"
+    try:
+        indexed_frame_embeddings = index_frames(_frame_search_index(), ingestion_result["frames"], case_id, evidence_id)
+    except (RuntimeError, ValueError) as exc:
+        # Ingestion is useful without the optional semantic model; a submitted
+        # query must fail clearly instead of silently ignoring its inputs.
+        if query.strip() or reference_content:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        indexed_frame_embeddings = 0
     _rewrite_ingestion_paths(ingestion_result)
     metadata = public_ingestion_metadata(ingestion_result)
     metadata.update(
@@ -530,7 +556,6 @@ async def inspect_cctv(
         }
     )
 
-    evidence_id = f"CCTV-{uuid4().hex[:8].upper()}"
     with SessionLocal() as session:
         _case_or_404(session, case_id)
         session.add(
@@ -578,14 +603,87 @@ async def inspect_cctv(
         findings = detect_spatiotemporal_contradictions(session, case_id)
         session.add(AuditLog(actor="demo-investigator", action="inspected_cctv", target=case_id))
         session.commit()
+    initial_results: list[dict[str, Any]] = []
+    if query.strip() or reference_content:
+        try:
+            initial_results = _public_search_results(
+                search_frames(_frame_search_index(), case_id, query, reference_content, evidence_id=evidence_id)
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "evidence_id": evidence_id,
         "case_id": case_id,
         "source": _storage_reference(source),
         "metadata": metadata,
         "indexed_embeddings": len(ingestion_result.get("face_embeddings", [])),
+        "indexed_frame_embeddings": indexed_frame_embeddings,
+        "query": query.strip(),
+        "results": initial_results,
         "contradictions_created": [finding.contradiction_id for finding in findings],
         "interpretation": "Derived frames and similarity candidates are investigative indicators, not proof.",
+    }
+
+
+async def _validated_reference_image(reference_image: UploadFile | None) -> bytes | None:
+    if reference_image is None:
+        return None
+    if not reference_image.filename:
+        raise HTTPException(status_code=422, detail="The reference image has no filename")
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+    extension = Path(reference_image.filename).suffix.lower()
+    if extension not in allowed_extensions or not (reference_image.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=415, detail="Reference image must be JPG, PNG, or WEBP")
+    content = await reference_image.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="The reference image is empty")
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Reference images are limited to 15 MB")
+    return content
+
+
+def _public_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    public: list[dict[str, Any]] = []
+    for result in results:
+        item = dict(result)
+        item["frame_path"] = _storage_reference(Path(item["frame_path"]))
+        public.append(item)
+    return public
+
+
+@router.post("/case/{case_id}/cctv/search")
+async def search_cctv_frames(
+    case_id: str,
+    query: str = Form(""),
+    reference_image: UploadFile | None = File(None),
+    evidence_id: str | None = Form(None),
+    limit: int = Form(12),
+) -> dict[str, Any]:
+    """Search already-indexed video frames without re-uploading or reprocessing a video."""
+
+    demo_state()
+    reference_content = await _validated_reference_image(reference_image)
+    if not query.strip() and not reference_content:
+        raise HTTPException(status_code=422, detail="Enter a search prompt or upload a reference image")
+    with SessionLocal() as session:
+        _case_or_404(session, case_id)
+        if evidence_id:
+            evidence = session.get(Evidence, evidence_id)
+            if not evidence or evidence.case_id != case_id or evidence.type != "cctv":
+                raise HTTPException(status_code=422, detail="Select a CCTV clip belonging to this case")
+    try:
+        results = search_frames(
+            _frame_search_index(), case_id, query=query, reference_image=reference_content,
+            evidence_id=evidence_id, limit=max(1, min(limit, 25)),
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "case_id": case_id,
+        "evidence_id": evidence_id,
+        "query": query.strip(),
+        "results": _public_search_results(results),
+        "interpretation": "Results are ranked visual-similarity candidates for investigator review, not conclusions or identity determinations.",
     }
 
 
