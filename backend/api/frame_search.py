@@ -17,6 +17,13 @@ import numpy as np
 from .vector_search import EMBEDDING_DIMENSION, FaceVectorIndex
 
 
+# Cosine similarities from one video are comparable to each other but are not
+# calibrated probabilities. Keep only the near-best band instead of displaying
+# every frame that happens to be rankable as a supposed match.
+NEAR_BEST_COSINE_WINDOW = 0.006
+MAX_REVIEW_CANDIDATES = 6
+
+
 class FrameSearchEmbedder:
     """Lazy CPU OpenCLIP wrapper so ordinary CCTV ingestion remains available."""
 
@@ -164,12 +171,12 @@ def search_frames(
     query = np.mean(np.vstack(vectors), axis=0)
     query /= max(float(np.linalg.norm(query)), 1e-12)
     candidates = index.search(query, limit=max(1, min(limit * 4, 100)), case_id=case_id)
-    results: list[dict[str, Any]] = []
+    ranked_results: list[dict[str, Any]] = []
     for candidate in candidates:
         metadata = candidate.metadata
         if evidence_id and metadata.get("evidence_id") != evidence_id:
             continue
-        results.append(
+        ranked_results.append(
             {
                 "frame_path": metadata.get("frame_path", ""),
                 "frame_index": metadata.get("frame_index"),
@@ -179,6 +186,11 @@ def search_frames(
                 "evidence_id": metadata.get("evidence_id"),
             }
         )
-        if len(results) >= limit:
-            break
-    return results
+    if not ranked_results:
+        return []
+    best_cosine = (float(ranked_results[0]["score"]) * 2) - 1
+    return [
+        result
+        for result in ranked_results
+        if ((float(result["score"]) * 2) - 1) >= best_cosine - NEAR_BEST_COSINE_WINDOW
+    ][: min(limit, MAX_REVIEW_CANDIDATES)]

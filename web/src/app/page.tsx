@@ -2,7 +2,9 @@
 
 import { ChangeEvent, DragEvent, FormEvent, RefObject, useEffect, useRef, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// Uvicorn's local dev server binds to IPv4 by default.  Using the explicit
+// loopback address avoids Windows browsers resolving localhost to ::1.
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 type View = "overview" | "timeline" | "mindmap" | "cctv" | "screening";
 type CaseItem = { id: string; title: string; status: string; priority: string; summary: string };
 type CctvFrame = { path: string; frame_index: number; timestamp_seconds: number; face_candidates?: number; face_detected?: boolean };
@@ -209,6 +211,7 @@ function Cctv({ evidence, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploadi
   const frames = selected?.metadata?.frames ?? [];
   const [preview, setPreview] = useState<CctvFrame | null>(null);
   const [results, setResults] = useState<FrameSearchResult[]>([]);
+  const [faceResults, setFaceResults] = useState<FrameSearchResult[]>([]);
   const [searchMessage, setSearchMessage] = useState("");
   const [query, setQuery] = useState("");
   const [referenceImage, setReferenceImage] = useState<File | null>(null);
@@ -230,6 +233,7 @@ function Cctv({ evidence, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploadi
     const data = await response.json();
     if (!response.ok) throw Error(data.detail || "Frame search failed");
     setResults(data.results ?? []);
+    setFaceResults(data.face_results ?? []);
     setSearchMessage(data.results?.length ? `Found ${data.results.length} review candidates.` : "No relevant frames were found for this search.");
   }
 
@@ -249,7 +253,7 @@ function Cctv({ evidence, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploadi
         <p>MP4, MOV, AVI - maximum 100 MB</p>
         <button onClick={onBrowse} disabled={uploading}>{file ? "Change video" : "Choose video"}</button>
         <input ref={inputRef} type="file" accept="video/*" onChange={onFile} hidden />
-        {file && <button onClick={async () => { const response = await onAnalyze(query, referenceImage); setResults(response?.results ?? []); }} disabled={uploading}>{uploading ? "Analyzing..." : "Analyze video"}</button>}
+        {file && <button onClick={async () => { const response = await onAnalyze(query, referenceImage); setResults(response?.results ?? []); setFaceResults(response?.face_results ?? []); }} disabled={uploading}>{uploading ? "Analyzing..." : "Analyze video"}</button>}
       </div>
       <div className="cctv-query">
         <label>What do you want to search for?
@@ -265,7 +269,8 @@ function Cctv({ evidence, onDrop, onFile, onAnalyze, onBrowse, inputRef, uploadi
         {searchMessage && <div className="upload-message">{searchMessage}</div>}
       </div>
       {message && <div className="upload-message">{message}</div>}
-      {results.length > 0 && <div className="frame-review"><div className="record-list-heading"><span>Search results</span><small>Ranked visual-similarity candidates</small></div><div className="frame-grid">{results.map((result) => <figure className="frame-card search-result" key={`${result.frame_path}-${result.timestamp_seconds}`}><img src={storageUrl(result.frame_path)} alt={`Search result at ${result.timestamp_seconds}s`} /><figcaption><b>{result.timestamp_seconds.toFixed(1)}s · {Math.round(result.score * 100)}%</b><span>{result.reason}</span></figcaption></figure>)}</div></div>}
+      {results.length > 0 && <div className="frame-review"><div className="record-list-heading"><span>Strongest search candidates</span><small>Lower-ranked frames were suppressed</small></div><div className="frame-grid">{results.map((result) => <figure className="frame-card search-result" key={`${result.frame_path}-${result.timestamp_seconds}`}><img src={storageUrl(result.frame_path)} alt={`Search result at ${result.timestamp_seconds}s`} /><figcaption><b>{result.timestamp_seconds.toFixed(1)}s · rank {result.score.toFixed(3)}</b><span>{result.reason}</span></figcaption></figure>)}</div></div>}
+      {faceResults.length > 0 && <div className="frame-review"><div className="record-list-heading"><span>Person-photo candidates</span><small>Compared against detected face regions</small></div><div className="frame-grid">{faceResults.map((result) => <figure className="frame-card search-result" key={`face-${result.frame_path}-${result.timestamp_seconds}`}><img src={storageUrl(result.frame_path)} alt={`Face candidate at ${result.timestamp_seconds}s`} /><figcaption><b>{result.timestamp_seconds.toFixed(1)}s · similarity {result.score.toFixed(3)}</b><span>{result.reason}</span></figcaption></figure>)}</div></div>}
       {clips.length > 1 && (
         <div className="clip-switcher">
           {clips.map((clip) => (

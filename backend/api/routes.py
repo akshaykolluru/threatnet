@@ -653,6 +653,47 @@ def _public_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]
     return public
 
 
+def _reference_face_candidates(
+    case_id: str,
+    reference_content: bytes | None,
+    evidence_id: str | None,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Use the existing face index for a person photo; do not treat it as object search."""
+
+    if not reference_content:
+        return []
+    try:
+        descriptor = get_face_extractor().extract_reference(reference_content)
+    except ValueError:
+        # A reference image can represent an object or scene, for which whole
+        # frame search remains the appropriate retrieval path.
+        return []
+    candidates = _face_index().search(descriptor.vector, limit=25, case_id=case_id)
+    results: list[dict[str, Any]] = []
+    with SessionLocal() as session:
+        for candidate in candidates:
+            if not candidate.metadata.get("face_detected", False):
+                continue
+            if evidence_id and candidate.metadata.get("evidence_id") != evidence_id:
+                continue
+            embedding = session.get(FaceEmbedding, candidate.item_id)
+            if not embedding or embedding.case_id != case_id:
+                continue
+            results.append(
+                {
+                    "frame_path": embedding.frame_path,
+                    "timestamp_seconds": embedding.timestamp_seconds,
+                    "score": round(max(0.0, candidate.similarity), 4),
+                    "reason": "Face-region similarity candidate from the supplied person photo.",
+                    "face_detected": True,
+                }
+            )
+            if len(results) >= limit:
+                break
+    return _public_search_results(results)
+
+
 def _restore_frame_storage_paths(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert stored /storage references back to local paths for one-time reindexing."""
 
@@ -714,11 +755,13 @@ async def search_cctv_frames(
         # Do not turn a model/runtime integration issue into a misleading empty
         # search result or an opaque server error for the investigator.
         raise HTTPException(status_code=503, detail=f"Frame search could not run: {exc}") from exc
+    face_results = _reference_face_candidates(case_id, reference_content, evidence_id)
     return {
         "case_id": case_id,
         "evidence_id": evidence_id,
         "query": query.strip(),
         "results": _public_search_results(results),
+        "face_results": face_results,
         "interpretation": "Results are ranked visual-similarity candidates for investigator review, not conclusions or identity determinations.",
     }
 
