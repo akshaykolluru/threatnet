@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from api.main import app
 
@@ -89,3 +90,49 @@ def test_image_evidence_upload_is_case_scoped_and_deletable():
     deleted = client.delete(f"/api/case/{case_id}/evidence/{uploaded['id']}")
     assert deleted.status_code == 200
     assert client.get(f"/{uploaded['source']}").status_code == 404
+
+
+def test_v2_demo_seed_exposes_match_and_spatiotemporal_alert():
+    response = client.get("/api/case/CASE-101")
+    assert response.status_code == 200
+    body = response.json()
+    assert any(match["label"] == "Match Indicator (Requires Verification)" for match in body["face_matches"])
+    contradiction = next(item for item in body["contradictions"] if item["reasoning_trace"])
+    assert "required travel speed" in contradiction["reasoning_trace"]
+    assert any(alert["type"] == "face_match" for alert in body["alerts"])
+    assert any(alert["type"] == "contradiction" for alert in body["alerts"])
+
+
+def test_text_extraction_creates_case_entities_events_and_relations():
+    case = client.post("/api/cases", json={"title": "Extraction workflow case"}).json()
+    response = client.post(
+        f"/api/case/{case['id']}/intelligence/extract",
+        json={
+            "source": "Witness note 44",
+            "source_type": "statement",
+            "text": "Maya Shah was seen at Banjara Hills at 2026-09-04T20:00:00. Maya Shah called Rohan Das at 2026-09-04T20:01:00 from Banjara Hills.",
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert {triple["relation"] for triple in result["triples"]} == {"SIGHTED_AT", "CALLED"}
+    detail = client.get(f"/api/case/{case['id']}").json()
+    assert any(entity["label"] == "Maya Shah" for entity in detail["entities"])
+    assert any(event["kind"] == "presence" for event in detail["events"])
+    assert any(edge["label"] == "SIGHTED_AT" for edge in detail["graph"]["edges"])
+
+
+def test_face_match_returns_ranked_indicator_candidates():
+    detail = client.get("/api/case/CASE-101").json()
+    arjun = next(entity for entity in detail["entities"] if entity["label"] == "Arjun Rao")
+    reference_path = Path(__file__).resolve().parents[1] / "storage" / "cctv" / "v2-demo" / "arjun-rao-reference.jpg"
+    response = client.post(
+        "/api/cctv/match-face",
+        data={"case_id": "CASE-101", "reference_label": "Arjun Rao", "entity_id": arjun["id"], "limit": "3"},
+        files={"reference_photo": ("arjun-rao-reference.jpg", reference_path.read_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["matches"]
+    assert result["matches"][0]["label"] == "Match Indicator (Requires Verification)"
+    assert "Indicator Only, Not Proof" in result["matches"][0]["interpretation"]

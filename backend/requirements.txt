@@ -1,0 +1,14 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+SQLAlchemy>=2.0.48
+python-multipart>=0.0.9
+numpy>=2.0
+opencv-python-headless>=4.10
+openpyxl>=3.1
+httpx>=0.27
+pytest>=8.0
+
+# Optional acceleration/model packages. The V2 API automatically uses them when
+# installed and retains an explicit OpenCV + NumPy fallback for local demo mode.
+insightface>=0.7.3; python_version < "3.14"
+faiss-cpu>=1.8.0; python_version < "3.14"

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .routes import router
 
-app = FastAPI(title="Crime Investigation Prototype API", version="0.1.0")
+app = FastAPI(title="ThreatNet V2 Intelligence Discovery Engine API", version="2.0.0")
 
 storage_dir = Path(os.getenv("STORAGE_DIR", str(Path(__file__).resolve().parent.parent / "storage")))
 storage_dir.mkdir(parents=True, exist_ok=True)

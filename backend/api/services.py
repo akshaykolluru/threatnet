@@ -78,11 +78,19 @@ def demo_state():
         _expand_demo_state(state)
         DEMO_FILE.write_text(json.dumps(state, indent=2))
         init_db(state)
+        # V2 data is generated from services so it remains idempotent and runnable
+        # even when the JSON seed predates the intelligence-engine schema.
+        from .seed_data import ensure_v2_demo_data
+
+        ensure_v2_demo_data()
         return state
     state = _default_state()
     _expand_demo_state(state)
     DEMO_FILE.write_text(json.dumps(state, indent=2))
     init_db(state)
+    from .seed_data import ensure_v2_demo_data
+
+    ensure_v2_demo_data()
     return state
 
 
