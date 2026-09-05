@@ -15,6 +15,14 @@ type GraphEdge = { source: string; target: string; label: string };
 type TimelineEvent = { id: string; time: string; label: string; location: string; entity_id?: string | null; kind?: string };
 type IntelligenceAlert = { id: string; type: string; severity: string; title: string; summary: string; reasoning_trace?: string; created_at?: string | null };
 type Detail = CaseItem & { evidence: Evidence[]; events: TimelineEvent[]; ranking: any[]; contradictions: any[]; audit: any[]; alerts?: IntelligenceAlert[]; face_matches?: any[]; graph?: { nodes: GraphNode[]; edges: GraphEdge[] } };
+type CaseIntake = { title: string; incidentType: string; priority: "Low" | "Medium" | "High"; incidentAt: string; location: string; description: string; reportedBy: string; witnesses: string; witnessContact: string; suspectInfo: string; notes: string };
+
+const emptyCaseIntake = (): CaseIntake => ({ title: "", incidentType: "Suspicious activity", priority: "High", incidentAt: "", location: "", description: "", reportedBy: "", witnesses: "", witnessContact: "", suspectInfo: "", notes: "" });
+
+function localDateTimeValue(date = new Date()) {
+  const timezoneOffset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16);
+}
 
 function storageUrl(path?: string): string {
   if (!path) return "";
@@ -42,10 +50,15 @@ export default function Home() {
   const [screening, setScreening] = useState<any>(null);
   const [hovered, setHovered] = useState<Evidence | null>(null);
   const [showAddCase, setShowAddCase] = useState(false);
-  const [newCaseTitle, setNewCaseTitle] = useState("");
+  const [caseIntake, setCaseIntake] = useState<CaseIntake>(emptyCaseIntake);
+  const [intakeError, setIntakeError] = useState("");
+  const [savingCase, setSavingCase] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [intakeLoggedAt, setIntakeLoggedAt] = useState("");
   const [caseMessage, setCaseMessage] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const sheetRef = useRef<HTMLInputElement>(null);
+  const caseTitleRef = useRef<HTMLInputElement>(null);
 
   async function loadCases() {
     const response = await fetch(`${API_BASE}/api/cases`);
@@ -61,12 +74,57 @@ export default function Home() {
     setDetail(await response.json());
   }
 
-  async function addCase() {
-    if (!newCaseTitle.trim()) return;
-    const response = await fetch(`${API_BASE}/api/cases`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: newCaseTitle }) });
-    const created = await response.json();
-    if (!response.ok) { setError(created.detail || "Case could not be created"); return; }
-    setCases((items) => [...items, created]); setActive(created.id); setNewCaseTitle(""); setShowAddCase(false); setView("overview");
+  const nextCaseId = `CASE-${Math.max(100, ...cases.map((item) => Number(item.id.replace("CASE-", "")) || 0)) + 1}`;
+
+  function openCaseIntake() {
+    const openedAt = new Date();
+    setCaseIntake({ ...emptyCaseIntake(), incidentAt: localDateTimeValue(openedAt) });
+    setIntakeLoggedAt(openedAt.toLocaleString());
+    setIntakeError("");
+    setShowAddCase(true);
+  }
+
+  function closeCaseIntake() {
+    if (savingCase) return;
+    setShowAddCase(false);
+    setIntakeError("");
+  }
+
+  function updateIntake<K extends keyof CaseIntake>(field: K, value: CaseIntake[K]) {
+    setCaseIntake((current) => ({ ...current, [field]: value }));
+  }
+
+  async function addCase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const requiredFields = [caseIntake.title, caseIntake.incidentType, caseIntake.incidentAt, caseIntake.location, caseIntake.description, caseIntake.reportedBy];
+    if (requiredFields.some((value) => !value.trim())) {
+      setIntakeError("Please fill in all mandatory intelligence fields marked with an asterisk (*).");
+      return;
+    }
+    const supportingDetails = [
+      `Incident type: ${caseIntake.incidentType}`,
+      `Incident time: ${new Date(caseIntake.incidentAt).toLocaleString()}`,
+      `Location: ${caseIntake.location.trim()}`,
+      `Reported by: ${caseIntake.reportedBy.trim()}`,
+      caseIntake.witnesses.trim() && `Witnesses: ${caseIntake.witnesses.trim()}`,
+      caseIntake.witnessContact.trim() && `Secure contact: ${caseIntake.witnessContact.trim()}`,
+      caseIntake.suspectInfo.trim() && `Descriptors: ${caseIntake.suspectInfo.trim()}`,
+      caseIntake.notes.trim() && `Notes: ${caseIntake.notes.trim()}`,
+    ].filter(Boolean).join("\n");
+    setSavingCase(true);
+    setIntakeError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/cases`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: caseIntake.title.trim(), priority: caseIntake.priority, summary: `${caseIntake.description.trim()}\n\n${supportingDetails}` }) });
+      const created = await response.json();
+      if (!response.ok) throw Error(created.detail || "Case could not be created");
+      setCases((items) => [...items, created]);
+      setActive(created.id);
+      setView("overview");
+      setShowAddCase(false);
+      setToastMessage(`${created.id} registered successfully to the workspace.`);
+    } catch (reason: any) {
+      setIntakeError(reason.message || "Case could not be created. Please try again.");
+    } finally { setSavingCase(false); }
   }
 
   async function toggleCaseStatus() {
@@ -109,6 +167,19 @@ export default function Home() {
 
   useEffect(() => { loadCases().catch((reason) => setError(reason.message)); }, []);
   useEffect(() => { if (!active) return; setLoading(true); loadDetail(active).catch((reason) => setError(reason.message)).finally(() => setLoading(false)); }, [active]);
+  useEffect(() => {
+    if (!showAddCase) return;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") closeCaseIntake(); };
+    document.addEventListener("keydown", onKeyDown);
+    window.setTimeout(() => caseTitleRef.current?.focus(), 0);
+    return () => { document.body.style.overflow = ""; document.removeEventListener("keydown", onKeyDown); };
+  }, [showAddCase, savingCase]);
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = window.setTimeout(() => setToastMessage(""), 3800);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
 
   async function uploadVideo(file?: File, query = "", referenceImage: File | null = null) {
     if (!file || !active) return;
@@ -139,11 +210,30 @@ export default function Home() {
   return <main><div className="shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">SI</span><span>CASELINE <small>evidence workspace</small></span></div><span className="secure-label">LOCAL DEMO / HUMAN REVIEW</span></header>
     <section className="hero"><div><div className="kicker">Investigation desk</div><h1>Turn scattered signals into a reviewable case story.</h1><p className="muted">A structured workspace for evidence, timelines, relationships, and investigator judgment.</p></div><div className="hero-status"><span className="pulse" />Demo mode active<br /><small>AI outputs are indicators, never proof.</small></div></section>
-    <section className="workspace-grid"><aside className="case-rail panel"><div className="rail-heading"><div><span className="eyebrow">Workspace</span><h2>Cases</h2></div><button className="count" onClick={() => setShowAddCase((value) => !value)}>+ Add case</button></div>{showAddCase && <div className="add-case"><input autoFocus placeholder="Case title" value={newCaseTitle} onChange={(event) => setNewCaseTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCase()} /><button onClick={addCase}>Create</button></div>}<div className="case-list">{cases.map((item) => <button className={`case-card ${active === item.id ? "active" : ""}`} key={item.id} onClick={() => { setActive(item.id); setHovered(null); }}><span className={`priority ${item.priority.toLowerCase()}`} /><span><strong>{item.id}</strong><b>{item.title}</b><small>{item.status} · {item.priority} priority</small></span></button>)}{!cases.length && !error && <div className="empty-state">Loading cases...</div>}{error && <div className="error-state">{error}<button onClick={() => loadCases()}>Retry</button></div>}</div></aside>
+    <section className="workspace-grid"><aside className="case-rail panel"><div className="rail-heading"><div><span className="eyebrow">Workspace</span><h2>Cases</h2></div><button className="count" type="button" onClick={openCaseIntake}>+ Add case</button></div><div className="case-list">{cases.map((item) => <button className={`case-card ${active === item.id ? "active" : ""}`} key={item.id} onClick={() => { setActive(item.id); setHovered(null); }}><span className={`priority ${item.priority.toLowerCase()}`} /><span><strong>{item.id}</strong><b>{item.title}</b><small>{item.status} · {item.priority} priority</small></span></button>)}{!cases.length && !error && <div className="empty-state">Loading cases...</div>}{error && <div className="error-state">{error}<button onClick={() => loadCases()}>Retry</button></div>}</div></aside>
       <div className="content-column">{detail && <><div className="case-heading"><div><span className="eyebrow">Active investigation / {detail.id}</span><h2>{detail.title}</h2><p className="muted">{detail.summary}</p></div><div className="case-actions"><span className="status-chip">● {detail.status}</span><button className="status-action" onClick={toggleCaseStatus}>{detail.status === "Closed" ? "Reopen case" : "Close case"}</button><button className="delete-case" onClick={deleteCase}>Delete case</button>{caseMessage && <small className="case-message">{caseMessage}</small>}</div></div><nav className="view-nav" aria-label="Case views">{([['overview', 'Command view'], ['timeline', 'Timeline'], ['mindmap', 'Mind map'], ['cctv', 'CCTV intake'], ['screening', 'Suspect screening']] as [View, string][]).map(([key, label]) => <button key={key} className={view === key ? "selected" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>{loading ? <div className="panel empty-state">Loading case intelligence...</div> : view === "overview" ? <Overview detail={detail} setView={setView} /> : view === "timeline" ? <Timeline detail={detail} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "mindmap" ? <MindMap detail={detail} hovered={hovered} setHovered={setHovered} onSaved={() => loadDetail(active)} onDelete={deleteRecord} /> : view === "cctv" ? <Cctv evidence={detail.evidence} file={pendingKind === "video" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "video")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "video")} onAnalyze={(query, referenceImage) => uploadVideo(pendingFile ?? undefined, query, referenceImage)} onBrowse={() => fileRef.current?.click()} inputRef={fileRef} uploading={uploading} message={uploadMessage} /> : <Screening result={screening} file={pendingKind === "sheet" ? pendingFile : null} onDrop={(event: DragEvent<HTMLDivElement>) => handleDrop(event, "sheet")} onFile={(event: ChangeEvent<HTMLInputElement>) => chooseFile(event, "sheet")} onAnalyze={() => uploadSheet(pendingFile ?? undefined)} onBrowse={() => sheetRef.current?.click()} inputRef={sheetRef} uploading={uploading} message={uploadMessage} />}</>}</div>
     </section>
+    {showAddCase && <CaseIntakeDialog intake={caseIntake} loggedAt={intakeLoggedAt} nextCaseId={nextCaseId} error={intakeError} saving={savingCase} titleRef={caseTitleRef} onChange={updateIntake} onClose={closeCaseIntake} onSubmit={addCase} />}
+    <div className={`case-toast ${toastMessage ? "visible" : ""}`} role="status" aria-live="polite"><span />{toastMessage}</div>
   </div></main>;
 }
+
+function CaseIntakeDialog({ intake, loggedAt, nextCaseId, error, saving, titleRef, onChange, onClose, onSubmit }: { intake: CaseIntake; loggedAt: string; nextCaseId: string; error: string; saving: boolean; titleRef: RefObject<HTMLInputElement>; onChange: <K extends keyof CaseIntake>(field: K, value: CaseIntake[K]) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <div className="case-dialog-layer" role="presentation"><button className="case-dialog-backdrop" type="button" aria-label="Close case intake" onClick={onClose} /><section className="case-dialog" role="dialog" aria-modal="true" aria-labelledby="case-intake-title">
+    <header className="case-dialog-header"><div><div className="dialog-kicker"><span>Case file generator</span><small>ThreatNet dossier intake</small></div><h2 id="case-intake-title">Create new investigation case</h2></div><button className="dialog-close" type="button" aria-label="Close dialog" onClick={onClose} disabled={saving}>×</button></header>
+    {error && <div className="dialog-alert" role="alert">{error}</div>}
+    <form className="case-intake-form" onSubmit={onSubmit}>
+      <IntakeSection number="01" title="Case information"><div className="intake-grid"><label className="span-8">Case title <Required /><input ref={titleRef} required value={intake.title} placeholder="e.g. Unsanctioned perimeter breach at Sector 4" onChange={(event) => onChange("title", event.target.value)} /></label><label className="span-4">Case ID <small>System generated</small><input readOnly value={nextCaseId} aria-label="System generated case ID" /></label><label className="span-4">Incident type <Required /><select value={intake.incidentType} onChange={(event) => onChange("incidentType", event.target.value)}><option>Suspicious activity</option><option>Perimeter breach</option><option>Theft / larceny</option><option>Missing person</option><option>Cyber intrusion</option><option>Vehicular anomaly</option><option>Other intelligence</option></select></label><label className="span-4">Severity <Required /><select value={intake.priority} onChange={(event) => onChange("priority", event.target.value as CaseIntake["priority"])}><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select></label><label className="span-4">Initial status<select disabled value="Open"><option>Open</option></select><small>New cases open automatically.</small></label></div></IntakeSection>
+      <IntakeSection number="02" title="Incident details"><div className="intake-grid"><label className="span-6">Incident date & time <Required /><input required type="datetime-local" value={intake.incidentAt} onChange={(event) => onChange("incidentAt", event.target.value)} /></label><label className="span-6">Incident location <Required /><input required value={intake.location} placeholder="e.g. Jubilee Hills Checkpost, Gate 3" onChange={(event) => onChange("location", event.target.value)} /></label><label className="span-12">Case description / initial narrative <Required /><textarea required rows={3} value={intake.description} placeholder="Outline initial observations, sensor anomalies, vehicle IDs, or immediate operational flags..." onChange={(event) => onChange("description", event.target.value)} /></label></div></IntakeSection>
+      <IntakeSection number="03" title="People involved"><div className="intake-grid"><label className="span-4">Case reported by <Required /><input required value={intake.reportedBy} placeholder="Officer name & badge ID" onChange={(event) => onChange("reportedBy", event.target.value)} /></label><label className="span-4">Witness name(s)<input value={intake.witnesses} placeholder="Key witnesses, comma separated" onChange={(event) => onChange("witnesses", event.target.value)} /></label><label className="span-4">Witness contact / secure line<input value={intake.witnessContact} placeholder="Phone, frequency, or department" onChange={(event) => onChange("witnessContact", event.target.value)} /></label><label className="span-12">Suspect information & vehicle descriptors<textarea rows={2} value={intake.suspectInfo} placeholder="Aliases, clothing or features, known associates, license plates..." onChange={(event) => onChange("suspectInfo", event.target.value)} /></label></div></IntakeSection>
+      <IntakeSection number="04" title="Additional information"><div className="intake-grid"><label className="span-6">Intake logged at<input readOnly value={loggedAt} aria-label="Current intake time" /></label><label className="span-12">Additional notes & chain of custody flags<textarea rows={2} value={intake.notes} placeholder="Optional security caveat, evidence vault locker ID, or jurisdiction handoff notes..." onChange={(event) => onChange("notes", event.target.value)} /></label></div></IntakeSection>
+      <footer className="case-dialog-footer"><button type="button" className="dialog-cancel" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className="dialog-submit" disabled={saving}>{saving ? "Creating case file..." : "Create case file"}</button></footer>
+    </form>
+  </section></div>;
+}
+
+function IntakeSection({ number, title, children }: { number: string; title: string; children: React.ReactNode }) { return <section className="intake-section"><h3><span>{number}.</span>{title}</h3>{children}</section>; }
+function Required() { return <b className="required" aria-label="required">*</b>; }
 
 function Overview({ detail, setView }: { detail: Detail; setView: (view: View) => void }) {
   const alerts = detail.alerts ?? [];
