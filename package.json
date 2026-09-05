@@ -6,11 +6,14 @@
     "web"
   ],
   "scripts": {
+    "predev": "kill-port 3000 8000",
+    "kill-ports": "kill-port 3000 8000",
     "dev": "concurrently -k -n api,web -c cyan,magenta \"uvicorn api.main:app --reload --app-dir backend\" \"npm run dev --workspace web\"",
     "build": "npm run build --workspace web",
     "test": "npm run test --workspace web && pytest -q backend/tests"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "kill-port": "^2.0.1"
   }
 }

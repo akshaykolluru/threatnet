@@ -134,3 +134,5 @@
 .search-result { margin:0; }
 .search-result figcaption { display:grid; gap:4px; padding:0 8px 8px; font:10px Arial,sans-serif; line-height:1.35; }
 .search-result figcaption b { color:var(--accent); font-weight:normal; }
+
+.case-description { margin:0; color:var(--muted); white-space:pre-line; font:13px/1.65 Arial,sans-serif; max-width:1000px; }
