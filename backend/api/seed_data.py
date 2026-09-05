@@ -170,9 +170,9 @@ def _insert_riya_records(session: Any) -> None:
     """Insert a coherent, intentionally fictional chain of reviewable records."""
 
     entities = [
-        ("ENT-RIYA", "Riya Sharma (fictional victim)", "riya sharma", "person", {"role": "victim", "fictional_demo": True}),
-        ("ENT-ROHAN", "Rohan Mehta (fictional suspect)", "rohan mehta", "person", {"role": "possible organizer", "fictional_demo": True}),
-        ("ENT-VIKRAM", "Vikram Sethi (fictional suspect)", "vikram sethi", "person", {"role": "possible direct perpetrator", "fictional_demo": True}),
+        ("ENT-RIYA", "Riya Sharma (fictional victim)", "riya sharma", "person", {"role": "victim", "estimated_age": "20", "body_type": "Average", "mobile_number": "90000-00002", "fictional_demo": True}),
+        ("ENT-ROHAN", "Rohan Mehta (fictional suspect)", "rohan mehta", "person", {"role": "possible organizer", "estimated_age": "22–25", "body_type": "Medium build", "mobile_number": "90000-00001", "vehicle_number": "TS 09 DEMO 4172", "fictional_demo": True}),
+        ("ENT-VIKRAM", "Vikram Sethi (fictional suspect)", "vikram sethi", "person", {"role": "possible direct perpetrator", "estimated_age": "28–32", "body_type": "Stocky build", "mobile_number": "90000-00003", "vehicle_number": "TS 10 DEMO 8831", "fictional_demo": True}),
         ("ENT-RIYA-CAR", "Riya's college commute — TS 12 DEMO 1648", "ts 12 demo 1648", "vehicle", {"owner": "Riya Sharma", "fictional_demo": True}),
         ("ENT-ROHAN-CAR", "Rohan's sedan — TS 09 DEMO 4172", "ts 09 demo 4172", "vehicle", {"owner": "Rohan Mehta", "fictional_demo": True}),
         ("ENT-VIKRAM-CAR", "Vikram's hatchback — TS 10 DEMO 8831", "ts 10 demo 8831", "vehicle", {"owner": "Vikram Sethi", "fictional_demo": True}),
@@ -182,8 +182,13 @@ def _insert_riya_records(session: Any) -> None:
         ("ENT-CRIME", "Riverside service road", "riverside service road", "location", {"fictional_demo": True}),
     ]
     for entity_id, label, canonical_name, entity_type, metadata in entities:
-        if session.get(Entity, entity_id) is None:
+        existing_entity = session.get(Entity, entity_id)
+        if existing_entity is None:
             session.add(Entity(id=entity_id, case_id=RIYA_CASE_ID, label=label, canonical_name=canonical_name, type=entity_type, metadata_json=json.dumps(metadata)))
+        elif existing_entity.metadata_json != json.dumps(metadata):
+            # Keep the fictional seed profile complete after a code update without
+            # altering investigator-created entities.
+            existing_entity.metadata_json = json.dumps(metadata)
 
     cctv_metadata = {
         "synthetic_demo": True,

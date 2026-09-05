@@ -8,10 +8,12 @@ Set-Location $projectRoot
 
 function Get-PythonCommand {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @("py", "-3")
+        & py -3 --version 2>$null
+        if ($LASTEXITCODE -eq 0) { return @("py", "-3") }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
+        & python --version 2>$null
+        if ($LASTEXITCODE -eq 0) { return @("python") }
     }
     throw "Python 3 is required. Install it with: winget install Python.Python.3.12"
 }
